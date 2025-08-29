@@ -17,9 +17,6 @@ from services.llm_service import LLMService  # New import
 from utils.validators import file_validator, validate_preprocessing_params
 from utils.exceptions import DatasetError, PreprocessingError, ModelTrainingError
 
-from tasks import train_model_task  # Note: still present but can be adjusted to sync call if desired
-
-
 app = FastAPI(
     title="No-Code ML Platform API",
     description="Backend API for training ML models without code",
@@ -46,7 +43,7 @@ os.makedirs(settings.upload_directory, exist_ok=True)
 @app.post("/upload", response_model=UploadResponse)
 async def upload_files(files: List[UploadFile] = File(...)):
     """
-    Upload datasets, analyze them, and get AI-driven recommendations for preprocessing and modeling.
+    Upload datasets, analyze, and provide AI-driven recommendations.
     """
     results = {}
     try:
@@ -55,22 +52,22 @@ async def upload_files(files: List[UploadFile] = File(...)):
             await file_validator.validate_file(file)
             file_path = await file_service.save_uploaded_file(file)
 
-            # Perform dataset analysis
+            # Analyze dataset
             analysis = file_service.analyze_dataset(file_path)
 
-            # Load a sample of dataset (e.g., 20 rows) for enhanced LLM prompt
+            # Load sample for LLM prompt (max 20 rows)
             import pandas as pd
             df_sample = pd.read_csv(file_path).head(20)
 
-            # Get AI-driven recommendations from LLM
+            # Get AI-driven recommendations
             llm_recommendations = llm_service.get_recommendations(analysis['summary'], df_sample)
-            
-            # Attach LLM recommendations to analysis response
+
+            # Attach to response
             analysis['llm_recommendations'] = llm_recommendations
 
             results[file.filename] = analysis
         
-        print(f"Successfully processed {len(files)} files")
+        print(f"Successfully processed {len(files)} datasets")
         return UploadResponse(message="Files uploaded successfully", files=results)
 
     except HTTPException as he:
@@ -107,7 +104,7 @@ async def preprocess_data(
                 selected_features=selected_features
             )
             results[file.filename] = {"preprocessed_file": preprocessed_path}
-        print(f"Successfully preprocessed {len(files)} files")
+        print(f"Successfully preprocessed {len(files)} datasets")
         return PreprocessResponse(message="Preprocessing completed", files=results)
     except HTTPException as he:
         raise he
@@ -118,50 +115,49 @@ async def preprocess_data(
 
 @app.post("/train", response_model=TrainResponse)
 async def train_models(
-    files: List[str] = Form(...),  # Changed var name for clarity
+    files: List[str] = Form(...),
     target_column: str = Form(None),
     task_type: str = Form(...),
     model_type: str = Form(None),
     tune_hyperparams: bool = Form(False)
 ):
     """
-    Trigger model training. Currently async with Celery, can be adapted to sync as needed.
+    Train ML models synchronously (Celery removed).
     """
     results = {}
     try:
         target_columns: Dict[str, str] = json.loads(target_column) if target_column and isinstance(target_column, str) else {}
 
         for file_path in files:
-            print(f"Scheduling training for file: {file_path}")
+            print(f"Training model for file: {file_path}")
             if not Path(file_path).exists():
                 raise ModelTrainingError(f"File not found: {file_path}")
 
-            # Extract filename to map to target column
             filename = Path(file_path).name.replace("preprocessed_", "")
             col = target_columns.get(filename, target_column if isinstance(target_column, str) else None)
 
-            # Schedule training (will use Celery task as before)
-            task = train_model_task.delay(file_path, task_type, model_type, col, None, tune_hyperparams)
-            results[file_path] = {"task_id": task.id}
+            # Call train synchronously
+            result = ml_service.train_model(file_path, task_type, model_type, col, tune_hyperparams)
+            results[file_path] = result
         
-        print(f"Training scheduled for {len(files)} files")
-        return TrainResponse(message="Training scheduled", results=results)
+        print(f"Training completed for {len(files)} datasets")
+        return TrainResponse(message="Training completed", results=results)
     except HTTPException as he:
         raise he
     except Exception as e:
         print(f"Training error: {e}")
-        raise ModelTrainingError(f"Training scheduling failed: {e}")
+        raise ModelTrainingError(f"Training failed: {e}")
 
 
 @app.post("/predict/{model_id}")
 async def predict(model_id: str, data: Dict[str, Any]):
     try:
-        model_path = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
-        if not model_path.exists():
+        model_file = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
+        if not model_file.exists():
             raise HTTPException(status_code=404, detail="Model not found")
-        result = await async_ml_service.predict_async(model_path, data)
+        prediction = await async_ml_service.predict_async(model_file, data)
         print(f"Prediction made for model: {model_id}")
-        return result
+        return prediction
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -172,13 +168,13 @@ async def predict(model_id: str, data: Dict[str, Any]):
 @app.get("/download-model/{model_id}")
 async def download_model(model_id: str):
     try:
-        model_path = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
-        if not model_path.exists():
+        model_file = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
+        if not model_file.exists():
             raise HTTPException(status_code=404, detail="Model file not found")
         print(f"Downloading model: {model_id}")
         return FileResponse(
-            path=str(model_path),
-            filename=model_path.name,
+            path=str(model_file),
+            filename=model_file.name,
             media_type="application/octet-stream"
         )
     except HTTPException as he:
