@@ -13,7 +13,7 @@ from models.responses import UploadResponse, PreprocessResponse, TrainResponse
 from services.file_service import FileService
 from services.preprocessing_service import PreprocessingService
 from services.ml_service import MLService, AsyncMLService
-from services.llm_service import LLMService  # New import
+from services.llm_service import LLMService
 from utils.validators import file_validator, validate_preprocessing_params
 from utils.exceptions import DatasetError, PreprocessingError, ModelTrainingError
 
@@ -25,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_allowed_origins,  # Updated to match settings.py
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,7 +35,7 @@ file_service = FileService()
 preprocessing_service = PreprocessingService()
 ml_service = MLService()
 async_ml_service = AsyncMLService()
-llm_service = LLMService()  # Initialize LLM service
+llm_service = LLMService()
 
 os.makedirs(settings.upload_directory, exist_ok=True)
 

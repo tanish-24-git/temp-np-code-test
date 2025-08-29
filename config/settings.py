@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     api_host: str = Field("127.0.0.1", env="API_HOST")
     api_port: int = Field(8000, env="API_PORT")
     debug: bool = Field(False, env="DEBUG")
-
-    max_file_size_mb: int = Field(100, env="MAX_FILE_SIZE_MB")  # consistent with usage
+    
+    max_file_size_mb: int = Field(100, env="MAX_SIZE_MB")
     cloud_provider: str = Field("aws", env="CLOUD_PROVIDER")
     aws_bucket: str = Field(..., env="AWS_BUCKET")  # required
 
