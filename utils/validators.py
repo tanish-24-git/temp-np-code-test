@@ -7,7 +7,7 @@ from config.settings import settings
 import pandas as pd
 import io
 
-ALLOWED_EXTENSIONS = set(settings.allowed_file_extensions)
+ALLOWED_EXTENSIONS = set(settings.allowed_extensions)
 
 CONTENT_TYPE_MAPPING = {
     '.csv': ['text/csv', 'application/csv', 'text/plain'],
