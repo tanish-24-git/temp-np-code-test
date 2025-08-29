@@ -1,0 +1,16 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+structlog==24.4.0
+slowapi==0.1.9
+python-jose==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic-settings==2.3.4
+aiofiles==24.1.0
+pandas==2.2.2
+scikit-learn==1.5.1
+joblib==1.4.2
+numpy==1.26.4
+sqlalchemy==2.0.31
+celery==5.4.0
+redis==5.0.7
+pytest==8.3.2
