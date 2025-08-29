@@ -9,15 +9,15 @@ class Settings(BaseSettings):
     api_port: int = Field(8000, env="API_PORT")
     debug: bool = Field(False, env="DEBUG")
     
-    max_file_size_mb: int = Field(100, env="MAX_SIZE_MB")
+    max_file_size_mb: int = Field(100, env="MAX_FILE_SIZE_MB")
     cloud_provider: str = Field("aws", env="CLOUD_PROVIDER")
     aws_bucket: str = Field(..., env="AWS_BUCKET")  # required
 
     aws_region: str = Field("us-east-1", env="AWS_REGION")
-    upload_directory: str = Field("./uploads", env="UPLOAD_DIRECTORY")
+    upload_directory: str = Field("./Uploads", env="UPLOAD_DIRECTORY")
 
     allowed_extensions: List[str] = Field(default_factory=lambda: [".csv", ".xlsx", ".json"], env="ALLOWED_EXTENSIONS")
-    cors_origins: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ORIGINS")
+    cors_allowed_origins: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ORIGINS")
 
     default_test_size: float = Field(0.2, env="DEFAULT_TEST_SIZE")
     random_state: int = Field(42, env="RANDOM_STATE")
@@ -41,15 +41,19 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
-    @field_validator("cors_origins", mode="before")
-    def parse_cors_origins(cls, v):
+    @field_validator("cors_allowed_origins", mode="before")
+    def parse_cors_allowed_origins(cls, v):
         if isinstance(v, str):
-            return json.loads(v)
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON format for CORS_ORIGINS: {str(e)}")
         return v
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "forbid"  # Explicitly forbid extra fields
         validate_default = True  # Ensures defaults are validated
 
 settings = Settings()
