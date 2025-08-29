@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 import structlog
 
+
 logger = structlog.get_logger()
 
 class InsightService:

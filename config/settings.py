@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     cloud_storage_provider: str  # matches CLOUD_STORAGE_PROVIDER
     aws_s3_bucket: str  # matches AWS_S3_BUCKET
     
-    # Other fields, renamed for consistent snake_case + full match with env vars:
     aws_region: str
     allowed_extensions: List[str]
     upload_directory: str
@@ -30,8 +29,10 @@ class Settings(BaseSettings):
     }
     max_training_time: int = 3600
 
-    celery_broker_url: str
-    celery_result_backend: str
+    # Groq API credentials and model info
+    groq_api_key: str
+    groq_model_name: str = "llama-3.3-70b-versatile"
+
 
     @validator('allowed_extensions', pre=True)
     def parse_allowed_extensions(cls, v):

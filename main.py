@@ -1,30 +1,31 @@
 import os
 import json
-from pathlib import Path
 from typing import List, Dict, Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from config.settings import settings
-from models.requests import PreprocessRequest, TrainRequest
+from config import settings
 from models.responses import UploadResponse, PreprocessResponse, TrainResponse
 from services.file_service import FileService
 from services.preprocessing_service import PreprocessingService
 from services.ml_service import MLService, AsyncMLService
+from services.llm_service import LLMService  # New import
 from utils.validators import file_validator, validate_preprocessing_params
-from utils.exceptions import DatasetError, ModelTrainingError, PreprocessingError, ValidationError
-from tasks import train_model_task  # Celery task
+from utils.exceptions import DatasetError, PreprocessingError, ModelTrainingError
 
-# Initialize FastAPI app
+from tasks import train_model_task  # Note: still present but can be adjusted to sync call if desired
+
+
 app = FastAPI(
     title="No-Code ML Platform API",
     description="Backend API for training ML models without code",
-    version="1.0.0"
+    version="1.0"
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -33,33 +34,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize services
 file_service = FileService()
 preprocessing_service = PreprocessingService()
 ml_service = MLService()
 async_ml_service = AsyncMLService()
+llm_service = LLMService()  # Initialize LLM service
 
-# Ensure upload directory exists
 os.makedirs(settings.upload_directory, exist_ok=True)
+
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_files(files: List[UploadFile] = File(...)):
-    """Upload and analyze datasets"""
+    """
+    Upload datasets, analyze them, and get AI-driven recommendations for preprocessing and modeling.
+    """
+    results = {}
     try:
-        results = {}
         for file in files:
             print(f"Processing file: {file.filename}")
             await file_validator.validate_file(file)
             file_path = await file_service.save_uploaded_file(file)
+
+            # Perform dataset analysis
             analysis = file_service.analyze_dataset(file_path)
+
+            # Load a sample of dataset (e.g., 20 rows) for enhanced LLM prompt
+            import pandas as pd
+            df_sample = pd.read_csv(file_path).head(20)
+
+            # Get AI-driven recommendations from LLM
+            llm_recommendations = llm_service.get_recommendations(analysis['summary'], df_sample)
+            
+            # Attach LLM recommendations to analysis response
+            analysis['llm_recommendations'] = llm_recommendations
+
             results[file.filename] = analysis
+        
         print(f"Successfully processed {len(files)} files")
         return UploadResponse(message="Files uploaded successfully", files=results)
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Upload error: {str(e)}")
-        if isinstance(e, HTTPException):
-            raise e
-        raise DatasetError(f"Failed to process uploaded files: {str(e)}")
+        print(f"Upload error: {e}")
+        raise DatasetError(f"Failed to process uploaded files: {e}")
+
 
 @app.post("/preprocess", response_model=PreprocessResponse)
 async def preprocess_data(
@@ -70,7 +89,6 @@ async def preprocess_data(
     target_column: str = Form(None),
     selected_features_json: str = Form(None)
 ):
-    """Preprocess uploaded datasets"""
     try:
         validate_preprocessing_params(missing_strategy, encoding, target_column)
         selected_features_dict = json.loads(selected_features_json) if selected_features_json else {}
@@ -91,44 +109,52 @@ async def preprocess_data(
             results[file.filename] = {"preprocessed_file": preprocessed_path}
         print(f"Successfully preprocessed {len(files)} files")
         return PreprocessResponse(message="Preprocessing completed", files=results)
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Preprocessing error: {str(e)}")
-        if isinstance(e, (HTTPException, ValidationError)):
-            raise e
-        raise PreprocessingError(f"Preprocessing failed: {str(e)}")
+        print(f"Preprocessing error: {e}")
+        raise PreprocessingError(f"Preprocessing failed: {e}")
+
 
 @app.post("/train", response_model=TrainResponse)
 async def train_models(
-    background_tasks: BackgroundTasks,
-    preprocessed_filenames: List[str] = Form(...),
+    files: List[str] = Form(...),  # Changed var name for clarity
     target_column: str = Form(None),
     task_type: str = Form(...),
     model_type: str = Form(None),
     tune_hyperparams: bool = Form(False)
 ):
-    """Train ML models asynchronously"""
+    """
+    Trigger model training. Currently async with Celery, can be adapted to sync as needed.
+    """
+    results = {}
     try:
-        target_columns = json.loads(target_column) if target_column and isinstance(target_column, str) else {}
-        results = {}
-        for preprocessed_file in preprocessed_filenames:
-            print(f"Scheduling training for file: {preprocessed_file}")
-            if not os.path.exists(preprocessed_file):
-                raise ModelTrainingError(f"Preprocessed file not found: {preprocessed_file}")
-            filename = os.path.basename(preprocessed_file).replace("preprocessed_", "")
-            file_target = target_columns.get(filename, target_column if isinstance(target_column, str) else None)
-            task = train_model_task.delay(preprocessed_file, task_type, model_type, file_target, tune_hyperparams)
-            results[preprocessed_file] = {"task_id": task.id}
-        print(f"Successfully scheduled training for {len(preprocessed_filenames)} files")
+        target_columns: Dict[str, str] = json.loads(target_column) if target_column and isinstance(target_column, str) else {}
+
+        for file_path in files:
+            print(f"Scheduling training for file: {file_path}")
+            if not Path(file_path).exists():
+                raise ModelTrainingError(f"File not found: {file_path}")
+
+            # Extract filename to map to target column
+            filename = Path(file_path).name.replace("preprocessed_", "")
+            col = target_columns.get(filename, target_column if isinstance(target_column, str) else None)
+
+            # Schedule training (will use Celery task as before)
+            task = train_model_task.delay(file_path, task_type, model_type, col, None, tune_hyperparams)
+            results[file_path] = {"task_id": task.id}
+        
+        print(f"Training scheduled for {len(files)} files")
         return TrainResponse(message="Training scheduled", results=results)
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Training error: {str(e)}")
-        if isinstance(e, (HTTPException, ModelTrainingError)):
-            raise e
-        raise ModelTrainingError(f"Training scheduling failed: {str(e)}")
+        print(f"Training error: {e}")
+        raise ModelTrainingError(f"Training scheduling failed: {e}")
+
 
 @app.post("/predict/{model_id}")
 async def predict(model_id: str, data: Dict[str, Any]):
-    """Make predictions using trained model"""
     try:
         model_path = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
         if not model_path.exists():
@@ -136,42 +162,45 @@ async def predict(model_id: str, data: Dict[str, Any]):
         result = await async_ml_service.predict_async(model_path, data)
         print(f"Prediction made for model: {model_id}")
         return result
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Prediction error: {str(e)}")
-        if isinstance(e, HTTPException):
-            raise e
-        raise ModelTrainingError(f"Prediction failed: {str(e)}")
+        print(f"Prediction error: {e}")
+        raise ModelTrainingError(f"Prediction failed: {e}")
+
 
 @app.get("/download-model/{model_id}")
 async def download_model(model_id: str):
-    """Download trained model file"""
     try:
         model_path = Path(settings.upload_directory) / f"trained_model_{model_id}.pkl"
         if not model_path.exists():
             raise HTTPException(status_code=404, detail="Model file not found")
         print(f"Downloading model: {model_id}")
         return FileResponse(
-            path=model_path,
-            filename=os.path.basename(model_path),
-            media_type='application/octet-stream'
+            path=str(model_path),
+            filename=model_path.name,
+            media_type="application/octet-stream"
         )
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Download error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+        print(f"Download error: {e}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     print("Health check performed")
     return {
         "status": "healthy",
         "message": "No-Code ML Platform API is running",
-        "version": "1.0.0"
+        "version": "1.0"
     }
+
 
 if __name__ == "__main__":
     uvicorn.run(
-        app,
+        "main:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=settings.debug
